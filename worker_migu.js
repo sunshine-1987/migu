@@ -74,7 +74,7 @@ const CHANNELS = {
 // 修改为推送到 GitHub
 async function pushToGitHub(ok, env) {
   // ⚠️⚠️⚠️ 这里一定要改成你自己的 GitHub 用户名和仓库名！⚠️⚠️⚠️
-  const GH_REPO = "你的GitHub用户名/migu"; 
+  const GH_REPO = "sunshine-1987/migu"; 
   const GH_TOKEN = env.GH_TOKEN; // 从 Cloudflare 的环境变量中安全读取
   
   const lines = [];
