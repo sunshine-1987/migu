@@ -57,59 +57,56 @@ async function getAndroidURL720p(pid) {
 
 
 
-async function pushToGitee(ok) {
-  const g = process.env.GITEE_TOKEN || "8e16d76b0ade2b34743bc96c4b603c59";
+// 修改为推送到你自己的 GitHub 仓库
+async function pushToGitHub(ok) {
+  // 这里请填入你的 GitHub 用户名和仓库名
+  const GH_REPO = "sunshine-1987/migu"; 
+  const GH_TOKEN = process.env.GH_TOKEN; // 从环境变量读取，安全！
+  
   const lines = [];
   for (const [grp, list] of Object.entries(ok)) {
     lines.push(grp + ",#genre#");
     for (const c of list) lines.push(c.name + "," + c.url);
   }
   const content = lines.join("\n");
-  const resp = await fetch("https://gitee.com/api/v5/repos/zy2zy7/iptv_alive/contents/live.txt?access_token=" + g, {
-    method: "GET"
-  });
-  let sha = null;
-  try { const r = await resp.json(); if (r && r.sha) sha = r.sha; } catch(e){}
+  if (!content) {
+    console.log("抓取结果为空，跳过推送");
+    return;
+  }
+  
+  const apiUrl = `https://api.github.com/repos/${GH_REPO}/contents/live.txt`;
   const b64 = btoa(unescape(encodeURIComponent(content)));
-  const body = { access_token: g, content: b64, message: "auto " + new Date().toISOString() };
+  
+  // 1. 获取原文件 SHA
+  let sha = null;
+  try {
+    const resp = await fetch(apiUrl, {
+      headers: { 'Authorization': `token ${GH_TOKEN}`, 'User-Agent': 'Cloudflare-Worker' }
+    });
+    if (resp.ok) {
+      const r = await resp.json();
+      sha = r.sha;
+    }
+  } catch(e) {}
+
+  // 2. 提交更新
+  const body = { 
+    message: "Worker auto update " + new Date().toISOString(), 
+    content: b64, 
+    branch: "main" 
+  };
   if (sha) body.sha = sha;
-  const up = await fetch("https://gitee.com/api/v5/repos/zy2zy7/iptv_alive/contents/live.txt?access_token=" + g, {
+  
+  const up = await fetch(apiUrl, {
     method: "PUT",
-    headers: { "Content-Type": "application/json" },
+    headers: { 'Authorization': `token ${GH_TOKEN}`, 'Content-Type': 'application/json', 'User-Agent': 'Cloudflare-Worker' },
     body: JSON.stringify(body)
   });
-  const r2 = await up.json();
-  console.log("Gitee push:", up.status, r2 && r2.content ? "OK sha=" + r2.content.sha.slice(0,8) : JSON.stringify(r2).slice(0,200));
-  return up.status;
-}
-
-export default {
-  async scheduled(event, env, ctx) {
-    const ok = {};
-    for (const [grp, list] of Object.entries(CHANNELS)) {
-      ok[grp] = ok[grp] || [];
-      for (const [name, pid] of list) {
-        try {
-          const url = await getAndroidURL720p(pid);
-          if (url) { ok[grp].push({ name, url }); console.log("OK " + name); }
-          else console.log("FAIL " + name);
-        } catch(e) { console.log("ERR " + name + " " + e.message); }
-        await new Promise(r => setTimeout(r, 600));
-      }
-    }
-    const valid = Object.fromEntries(Object.entries(ok).filter(([,v]) => v.length));
-    await pushToGitee(valid);
-  },
-  async fetch(request, env, ctx) {
-    const ok = {};
-    for (const [grp, list] of Object.entries(CHANNELS)) {
-      ok[grp] = ok[grp] || [];
-      for (const [name, pid] of list) {
-        try { const url = await getAndroidURL720p(pid); if (url) ok[grp].push({name, url}); } catch(e){}
-        await new Promise(r => setTimeout(r, 400));
-      }
-    }
-    const st = await pushToGitee(Object.fromEntries(Object.entries(ok).filter(([,v])=>v.length)));
-    return new Response("pushed " + st, { status: 200 });
+  
+  if (up.ok) {
+      console.log("GitHub push OK");
+  } else {
+      console.log("GitHub push fail: " + await up.text());
   }
+}
 };
