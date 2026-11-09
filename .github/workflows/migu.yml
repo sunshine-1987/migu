@@ -1,0 +1,97 @@
+name: 拉取develop202 CSP并导出migu.m3u
+on:
+  schedule:
+    - cron: "0 */4 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  csp_export:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出本仓库
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: 安装依赖
+        run: npm install node-fetch@2 cheerio
+
+      - name: 下载 develop202 的 interface.txt（CSP源码）
+        run: |
+          curl -L "https://develop202.github.io/migu_video/interface.txt" -o csp_source.txt
+
+      - name: 构建沙箱执行脚本 csp_run.js
+        run: |
+          cat > csp_run.js << 'EOF'
+          const fetch = require('node-fetch');
+          const fs = require('fs');
+          const cspText = fs.readFileSync('./csp_source.txt','utf8');
+
+          // ========== 简易CSP沙箱polyfill（模拟TVBox CSP内置API） ==========
+          global.req = async function(opt){
+            const url = opt.url;
+            const method = opt.method || 'GET';
+            const headers = opt.headers || {};
+            const res = await fetch(url,{method,headers,body:opt.body});
+            const text = await res.text();
+            return {content:text};
+          }
+          global.$js = {
+            btoa: function(s){return Buffer.from(s).toString('base64')},
+            atob: function(s){return Buffer.from(s,'base64').toString()}
+          }
+          global.evalJS = eval;
+          // 模拟CSP返回频道列表的回调容器
+          let cspResult = [];
+          global.setResult = function(list){
+            cspResult = list;
+          }
+
+          // ========== 执行CSP源码 ==========
+          eval(cspText);
+
+          // ========== 把CSP返回的频道数组转成标准m3u ==========
+          if(!Array.isArray(cspResult) || cspResult.length === 0){
+            console.error("CSP返回空频道列表！咪咕token风控/脚本失效");
+            process.exit(1);
+          }
+          let m3u = "#EXTM3U\n";
+          let txt = "";
+          for(const item of cspResult){
+            const name = item.name || "";
+            const url = item.url || "";
+            if(!url) continue;
+            m3u += `#EXTINF:-1,${name}\n${url}\n`;
+            txt += `${name},${url}\n`;
+          }
+          fs.writeFileSync("./migu.m3u", m3u, 'utf8');
+          fs.writeFileSync("./migu.txt", txt, 'utf8');
+          console.log(`✅ 成功导出 ${cspResult.length} 个频道`);
+          EOF
+
+      - name: 执行沙箱，运行CSP代码生成 migu.m3u / migu.txt
+        run: node csp_run.js
+
+      - name: 配置Git
+        run: |
+          git config --global user.name "Auto Bot"
+          git config --global user.email "bot@github.com"
+
+      - name: 提交文件
+        run: |
+          git add migu.m3u migu.txt
+          if git diff --cached --quiet; then
+            echo "频道列表无变化，跳过提交"
+            exit 0
+          fi
+          git commit -m "🤖 从develop202 CSP自动导出migu源 $(date '+%Y-%m-%d %H:%M:%S')"
+          git push
